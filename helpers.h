@@ -36,7 +36,9 @@ void show_matrix(char *matrix){
 		}
 		printf("\n");
 	}
+	printf("\n");
 }
+
 #define BUFLEN		256	// dimensiunea maxima a calupului de date
 #define MAX_CLIENTS	5	// numarul maxim de clienti in asteptare
 #endif

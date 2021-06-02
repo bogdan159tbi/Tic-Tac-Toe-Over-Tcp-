@@ -59,20 +59,24 @@ int client_left(int **queue, int *nr_clients, int sockfd){
 	*nr_clients -= 1;
 	return 0;
 }
-void init_board(char **board){
+void init_board(struct Game **game){
+	(*game)->live = 0;
+	(*game)->player1_sockfd = -1;
+	(*game)->player2_sockfd = -1;
+
 	for(int i = 0 ;i < BOARD_LEN * BOARD_LEN; i++){
-		(*board)[i] = '*';
+		(*game)->matrix[i] = '*';
 	}
 }
 int get_moves(char *buf, int *x ,int *y){
 	char *tok;
 	tok = strtok(buf," ");
-	if(tok[0] < 48 || tok[0] > 51)
+	if(tok[0] < 48 || tok[0] > 50)
 		return 0;
 	*x = atoi(tok);
 	
 	tok = strtok(NULL," ");
-	if(tok[0] < 48 || tok[0] > 51)
+	if(tok[0] < 48 || tok[0] > 50)
 		return 0;
 
 	*y = atoi(tok);
@@ -227,6 +231,12 @@ void send_looser(int sockfd){
 	int ret = send(sockfd, msg, strlen(msg), 0);
 	DIE(ret < 0, "sending failed\n");
 }
+void send_error_msg(char *buff,int sockfd){
+	char *msg = strdup(buff);
+	DIE(!msg, "bla\n");
+	int ret = send( sockfd, msg, strlen(msg), 0);
+	DIE(ret < 0, "valid move failed\n");
+}
 void announce_turn(int sockfd){
 	char *buffer = strdup("Please select move.It's your turn!");
 	int ret = send(sockfd , buffer, strlen(buffer), 0);
@@ -244,8 +254,13 @@ int make_move(struct Game **game, int x, int y,fd_set *read_fds, int sockfd){
 	show_matrix((*game)->matrix);
 	int won = check_status((*game)->matrix);
 	if(won){
-		send_winner((*game)->player1_sockfd);
-		send_looser((*game)->player2_sockfd);
+		if(sockfd == (*game)->player2_sockfd){
+			send_winner((*game)->player1_sockfd);
+			send_looser((*game)->player2_sockfd);
+		} else {
+			send_looser((*game)->player1_sockfd);
+			send_winner((*game)->player2_sockfd);
+		}
 		//end game
 		FD_CLR((*game)->player1_sockfd, read_fds);
 		FD_CLR((*game)->player2_sockfd, read_fds);
@@ -344,20 +359,10 @@ int main(int argc, char *argv[])
 						game->live = 1;
 						
 					} else if(game->live == 1){
-						char *wait_msg = strdup("Game is live.Please wait\n");
-						DIE(wait_msg == NULL, "wait msg failed\n");
-						ret = send(newsockfd, wait_msg, strlen(wait_msg), 0);
-						DIE(ret < 0, "wait msg failed\n");
+						send_error_msg("Game is live.Please wait\n", newsockfd);
 					}
 					
 				} else if (i != sockfd){
-					
-					ret = game_equal(game->matrix);
-					if(ret == 1){
-						send_equal(game->player1_sockfd);
-						send_equal(game->player2_sockfd);
-						game_ended(&game, &player_queue_sockfd, &players_online);
-					}
 
 					// s au primit indicii pentru o mutare 
 					memset(buffer, 0, BUFLEN);
@@ -369,23 +374,25 @@ int main(int argc, char *argv[])
 						printf("Player %d left...\n", i);
 						// se scoate din multimea de citire socketul inchis 
 						if(i == game->player1_sockfd || i == game->player2_sockfd){
-							//game ended but who won ?
+							//game ended 
 							if (i == game->player1_sockfd){
 								printf("Game ended...Player %d won\n", game->player2_sockfd);
 							} else if (i == game->player2_sockfd){
 								printf("Game ended...Player %d won\n", game->player1_sockfd);
 							}
-							game->live = 0;
-							game->player1_sockfd = -1;
-							game->player2_sockfd = -1;
-							init_board(&game->matrix);
+							init_board(&game);
 						}
 						client_left(&player_queue_sockfd, &players_online, i);
 
 						close(i);
 						FD_CLR(i, &read_fds);
 					} else {
-						
+						ret = game_equal(game->matrix);
+						if(ret == 1){
+							send_equal(game->player1_sockfd);
+							send_equal(game->player2_sockfd);
+							game_ended(&game, &player_queue_sockfd, &players_online);
+						}
 						buffer[strlen(buffer)-1] = '\0';
 						//buffer has the indexes from one player
 						
@@ -393,12 +400,9 @@ int main(int argc, char *argv[])
 						int x,y;
 						ret = get_moves(buffer, &x, &y);
 						if(ret){
-							printf("S-au primit de la clientul de pe socketul %d indexii: %d %d\n", i, x, y);
+							//printf("S-au primit de la clientul de pe socketul %d indexii: %d %d\n", i, x, y);
 							if(!is_valid_move(x,y, game->matrix)){
-								char *msg = strdup("Move is not valid!Try other move!");
-								DIE(!msg, "bla\n");
-								ret = send(i, msg, strlen(msg), 0);
-								DIE(ret < 0, "valid move failed\n");
+								send_error_msg("Move is not valid!Try other move!", i);
 								if (i == game->player2_sockfd)
 									game->turn_sockfd = game->player2_sockfd;
 								else 
@@ -412,11 +416,7 @@ int main(int argc, char *argv[])
 												game_ended(&game, &player_queue_sockfd, &players_online);
 
 										} else {
-											memset(buffer, 0, sizeof(buffer));
-											strcpy(buffer, "It s not your turn!Please wait...");
-											ret = send(i, buffer, strlen(buffer), 0);
-											DIE(ret < 0,"announce failed\n");
-
+											send_error_msg("It s not your turn!Please wait...", i);
 										}
 									} else if (i == game->player2_sockfd ){
 										if(game->turn_sockfd == i){
@@ -425,19 +425,13 @@ int main(int argc, char *argv[])
 												game_ended(&game, &player_queue_sockfd, &players_online);
 
 										} else {
-											memset(buffer, 0, sizeof(buffer));
-											strcpy(buffer, "It s not your turn!Please wait...");
-											ret = send(i, buffer, strlen(buffer), 0);
-											DIE(ret < 0,"announce failed\n");
+											send_error_msg("It s not your turn!Please wait...", i);
 										}
 									}
 								}
 							}
 						} else {
-							char *msg = strdup("Index not correct!Try again!");
-							DIE(!msg, "bla\n");
-							ret = send(i, msg, strlen(msg), 0);
-							DIE(ret < 0, "index move failed\n");
+							send_error_msg("Index not correct!Try again!", i);
 							if (i == game->player2_sockfd)
 								game->turn_sockfd = game->player2_sockfd;
 							else 

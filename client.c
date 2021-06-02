@@ -64,11 +64,11 @@ int main(int argc, char *argv[])
 					DIE(ret < 0,"recv from server\n");
 					if (ret == 0){
 						//s a inchis socket de la server
-						printf("server closed\n");
+						printf("Game ended!\n");
 						FD_CLR(sockfd, &read_fds);
 						return -1;
 					}
-					printf("received from server: %s\n", buffer);
+					printf("Message: %s\n", buffer);
 
 				} else if (i == STDIN_FILENO){
 					//a primit de la tastatura
